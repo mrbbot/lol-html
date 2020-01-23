@@ -1,6 +1,7 @@
-use super::handlers::{DocumentContentHandlers, ElementContentHandlers};
+use super::handlers::{DocumentContentHandlers, ElementContentHandlers, HandlerJsErrorWrap};
 use super::*;
 use js_sys::{Function as JsFunction, Uint8Array};
+use lol_html::errors::RewritingError;
 use lol_html::{
     DocumentContentHandlers as NativeDocumentContentHandlers,
     ElementContentHandlers as NativeElementContentHandlers, HtmlRewriter as NativeHTMLRewriter,
@@ -23,6 +24,13 @@ impl OutputSink for JsOutputSink {
 
         // NOTE: the error is handled in the JS wrapper.
         self.0.call1(&this, &chunk).unwrap();
+    }
+}
+
+fn rewriting_error_to_js(err: RewritingError) -> JsValue {
+    match err {
+        RewritingError::ContentHandlerError(err) => err.downcast::<HandlerJsErrorWrap>().unwrap().0,
+        _ => JsValue::from(err.to_string()),
     }
 }
 
@@ -56,33 +64,37 @@ impl HTMLRewriter {
         }
     }
 
-    fn ensure_inner(&mut self) -> JsResult<()> {
-        if self.inner.is_none() {
-            let output_sink = self.output_sink.take().unwrap();
-            // NOTE: selector are passed by reference to the rewriter ctor, though they
-            // are not stored in the rewriter, so we need their references to be valid
-            // only during the rewriter invocation.
-            let selectors: Vec<_> = self.selectors.drain(..).collect();
+    fn inner_mut(&mut self) -> JsResult<&mut NativeHTMLRewriter<'static, JsOutputSink>> {
+        Ok(match self.inner {
+            Some(ref mut inner) => inner,
+            None => {
+                let output_sink = self.output_sink.take().unwrap();
+                // NOTE: selector are passed by reference to the rewriter ctor, though they
+                // are not stored in the rewriter, so we need their references to be valid
+                // only during the rewriter invocation.
+                let selectors: Vec<_> = self.selectors.drain(..).collect();
 
-            let settings = Settings {
-                element_content_handlers: self
-                    .element_content_handlers
-                    .drain(..)
-                    .enumerate()
-                    .map(|(i, h)| (&selectors[i], h))
-                    .collect(),
+                let settings = Settings {
+                    element_content_handlers: self
+                        .element_content_handlers
+                        .drain(..)
+                        .enumerate()
+                        .map(|(i, h)| (&selectors[i], h))
+                        .collect(),
 
-                document_content_handlers: self.document_content_handlers.drain(..).collect(),
-                encoding: &self.encoding,
-                ..Settings::default()
-            };
+                    document_content_handlers: self.document_content_handlers.drain(..).collect(),
+                    encoding: &self.encoding,
+                    ..Settings::default()
+                };
 
-            let rewriter = NativeHTMLRewriter::try_new(settings, output_sink).into_js_result()?;
+                let rewriter =
+                    NativeHTMLRewriter::try_new(settings, output_sink).into_js_result()?;
 
-            self.inner = Some(rewriter);
-        }
+                self.inner = Some(rewriter);
 
-        Ok(())
+                self.inner.as_mut().unwrap()
+            }
+        })
     }
 
     pub fn on(&mut self, selector: &str, handlers: ElementContentHandlers) -> JsResult<()> {
@@ -102,5 +114,15 @@ impl HTMLRewriter {
         self.document_content_handlers.push(handlers.into_native());
 
         Ok(())
+    }
+
+    pub fn write(&mut self, chunk: &[u8]) -> JsResult<()> {
+        self.inner_mut()?
+            .write(chunk)
+            .map_err(rewriting_error_to_js)
+    }
+
+    pub fn end(&mut self) -> JsResult<()> {
+        self.inner_mut()?.end().map_err(rewriting_error_to_js)
     }
 }

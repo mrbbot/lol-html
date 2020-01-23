@@ -16,7 +16,7 @@ use thiserror::Error;
 // `write()` or `end()`.
 #[derive(Error, Debug)]
 #[error("JS handler error")]
-pub struct HandlerErrorWrap(JsValue);
+pub struct HandlerJsErrorWrap(pub JsValue);
 
 macro_rules! make_handler {
     ($handler:ident, $JsArgType:ident) => {
@@ -27,7 +27,7 @@ macro_rules! make_handler {
 
             let res = match $handler.call1(&this, &js_arg) {
                 Ok(_) => Ok(()),
-                Err(e) => Err(HandlerErrorWrap(e).into()),
+                Err(e) => Err(HandlerJsErrorWrap(e).into()),
             };
 
             mem::drop(anchor);
