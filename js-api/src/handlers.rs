@@ -17,6 +17,14 @@ use thiserror::Error;
 #[derive(Error, Debug)]
 #[error("JS handler error")]
 pub struct HandlerJsErrorWrap(pub JsValue);
+// Probably horribly unsafe, but it works™
+unsafe impl Send for HandlerJsErrorWrap {}
+unsafe impl Sync for HandlerJsErrorWrap {}
+
+extern "C" {
+    // Triggers Asyncify stack unwinding, awaits promise in map with id, then rewinds stack
+    fn await_promise(promise_id: i32);
+}
 
 macro_rules! make_handler {
     ($handler:ident, $JsArgType:ident) => {
@@ -26,7 +34,14 @@ macro_rules! make_handler {
             let js_arg = JsValue::from(js_arg);
 
             let res = match $handler.call1(&this, &js_arg) {
-                Ok(_) => Ok(()),
+                Ok(promise_id) => {
+                    if let Some(promise_id) = promise_id.as_f64().map(|id| id as i32) {
+                        if promise_id != 0 {
+                            unsafe { await_promise(promise_id) };
+                        }
+                    }
+                    Ok(())
+                }
                 Err(e) => Err(HandlerJsErrorWrap(e).into()),
             };
 

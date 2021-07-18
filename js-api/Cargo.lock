@@ -192,13 +192,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "lol-html-js-api"
-version = "0.1.0"
+name = "lol-html"
+version = "0.3.0"
 dependencies = [
  "js-sys",
  "lol_html",
  "serde",
  "serde-wasm-bindgen",
+ "thiserror",
  "wasm-bindgen",
 ]
 
